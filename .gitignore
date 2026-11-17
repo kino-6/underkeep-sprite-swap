@@ -1,0 +1,6 @@
+# Local data: contains images extracted from the game. Never commit.
+staged/
+applied/
+backup/
+work/
+*.png

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Underkeep Sprite Swap</title>
+<style>
+:root {
+  --bg: #1b1b22; --panel: #25252e; --line: #3a3a46; --text: #e6e6ea; --dim: #9a9aa8;
+  --accent: #d9a441; --mod: #4fb37a; --danger: #d0605a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, "Segoe UI", "Yu Gothic UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+input[type=search] { flex: 1 1 200px; min-width: 0; padding: 6px 10px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
+button, .btn { padding: 6px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font: inherit; text-decoration: none; }
+button:hover, .btn:hover { border-color: var(--dim); }
+button.on { border-color: var(--accent); color: var(--accent); }
+button.primary { background: var(--accent); color: #1b1b22; border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--danger); }
+button:disabled { opacity: .4; cursor: default; }
+#count { color: var(--dim); }
+#notes { padding: 8px 16px; background: #3a2a1a; color: var(--accent); }
+#notes:empty { display: none; }
+#grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; padding: 16px; }
+.tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px; background: var(--panel); border: 2px solid transparent; border-radius: 8px; cursor: pointer; }
+.tile:hover { border-color: var(--line); }
+.tile.drag { border-color: var(--accent); }
+.tile.applied { border-color: var(--mod); }
+.tile.staged { border: 2px dashed var(--accent); }
+.tile.lost { border-color: var(--danger); }
+.tile img { width: 120px; height: 140px; object-fit: contain; image-rendering: pixelated; }
+.tile span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--dim); }
+dialog { width: min(900px, calc(100vw - 32px)); padding: 0; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; }
+dialog::backdrop { background: rgba(0,0,0,.6); }
+.ed { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 16px; padding: 16px; }
+.ed h2 { grid-column: 1 / -1; margin: 0; font-size: 16px; }
+#stage { width: 100%; aspect-ratio: 4 / 3; background: repeating-conic-gradient(#2c2c36 0 25%, #24242c 0 50%) 0 0 / 16px 16px; border-radius: 6px; cursor: grab; touch-action: none; }
+#stage.empty { cursor: default; }
+.side { display: flex; flex-direction: column; gap: 10px; }
+.pair { display: flex; gap: 8px; }
+.pair figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; color: var(--dim); }
+.pair canvas, .pair img { width: 100px; height: auto; image-rendering: pixelated; background: repeating-conic-gradient(#2c2c36 0 25%, #24242c 0 50%) 0 0 / 10px 10px; }
+label { display: flex; gap: 6px; align-items: center; color: var(--dim); white-space: nowrap; }
+input[type=range] { flex: 1; min-width: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 16px; justify-content: flex-end; }
+#msg { margin-right: auto; align-self: center; color: var(--dim); }
+@media (max-width: 640px) { .ed { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <input type="search" id="q" data-ph="search">
+  <button data-f="^face_\d+(_gold|_mod)?$" data-t="fHeroes" class="on"></button>
+  <button data-f="^companion_face" data-t="fCompanions"></button>
+  <button data-f="_idle\d*$" data-t="fCreatures"></button>
+  <button data-f="@mod" data-t="fChanged"></button>
+  <button data-f="" data-t="fAll"></button>
+  <span id="count"></span>
+  <button id="restoreAll" class="danger" data-t="restoreAll"></button>
+  <button id="commit" class="primary"></button>
+  <button id="lang"></button>
+</header>
+<div id="notes"></div>
+<main id="grid"></main>
+
+<dialog id="dlg">
+  <div class="ed">
+    <h2 id="title"></h2>
+    <canvas id="stage" class="empty"></canvas>
+    <div class="side">
+      <div class="pair">
+        <figure><img id="origImg" alt=""><figcaption data-t="original"></figcaption></figure>
+        <figure><canvas id="out"></canvas><figcaption data-t="result"></figcaption></figure>
+      </div>
+      <label><span data-t="zoom"></span> <input type="range" id="zoom" min="0" max="1000" value="0"></label>
+      <label><input type="checkbox" id="smooth" checked> <span data-t="smooth"></span></label>
+      <label id="blinkRow"><input type="checkbox" id="blink" checked> <span data-t="blink"></span></label>
+      <button id="pick" data-t="pick"></button>
+      <button id="fit" data-t="fit"></button>
+      <button id="fill" data-t="fill"></button>
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+  </div>
+  <div class="actions">
+    <span id="msg" data-t="hint"></span>
+    <a class="btn" id="dl" download data-t="save"></a>
+    <button id="restore" class="danger" data-t="restore"></button>
+    <button id="close" data-t="close"></button>
+    <button id="apply" class="primary" disabled data-t="apply"></button>
+  </div>
+</dialog>
+
+<script>
+const I18N = {
+  en: {
+    search: 'Filter by name (regex)', fHeroes: 'Heroes', fCompanions: 'Companions', fCreatures: 'Creatures & NPCs',
+    fChanged: 'Changed', fAll: 'All', restoreAll: 'Restore all', commit: n => `Write to game (${n})`,
+    count: (n, b) => `${n} sprites · ${b} backup(s)`,
+    original: 'Original', result: 'Result', zoom: 'Zoom', smooth: 'Smooth scaling', blink: 'Also replace blink frame',
+    pick: 'Choose image…', fit: 'Fit whole image', fill: 'Fill frame',
+    hint: 'Drop, paste (Ctrl+V) or choose an image. Drag to move, scroll to zoom.',
+    save: 'Download current', restore: 'Restore', close: 'Close', apply: 'Stage',
+    staged: 'staged', applied: 'in game', lost: 'reverted by the game (can be re-applied)',
+    confirmCommit: n => `Write ${n} sprite(s) into the game files? Each atlas is backed up before its first write.\nIf the game is running, restart it to see the change.`,
+    confirmRestoreAll: 'Discard all drafts and put every original sprite back into the game?',
+    failed: 'Failed: ', loadFailed: 'Failed to load: ',
+    note_reset: (a, n) => `${a} was reverted (e.g. by Steam file verification). ${n} sprite(s) can be re-applied with "Write to game".`,
+    note_updated: (a, n) => `${a} was changed by a game update; the backup now holds the new atlas. ${n} sprite(s) can be re-applied with "Write to game".`,
+    other: '日本語',
+  },
+  ja: {
+    search: '名前で絞り込み（正規表現可）', fHeroes: '主人公の顔', fCompanions: '仲間の顔', fCreatures: '敵・人物',
+    fChanged: '変更あり', fAll: 'すべて', restoreAll: '全部元に戻す', commit: n => `ゲームに反映（${n}）`,
+    count: (n, b) => `${n} 枚・控え ${b} 個`,
+    original: '元', result: '書き込む絵', zoom: '拡大', smooth: '滑らかに縮める', blink: '瞬きの絵も同じにする',
+    pick: '画像を選ぶ…', fit: '全体を収める', fill: '枠いっぱいにする',
+    hint: '画像をドロップ・貼り付け（Ctrl+V）・選択。ドラッグで位置、ホイールで拡大',
+    save: '今の絵を保存', restore: '元に戻す', close: '閉じる', apply: '決定',
+    staged: '下書き', applied: '反映済み', lost: '外れた（反映し直せる）',
+    confirmCommit: n => `${n} 枚をゲームのファイルに書き込みます。元の atlas は書き込む前に控えます。\nゲームを起動中なら、再起動すると反映されます。`,
+    confirmRestoreAll: '下書きを捨て、ゲームに反映した絵もすべて元に戻します。',
+    failed: '失敗: ', loadFailed: '読み込みに失敗: ',
+    note_reset: (a, n) => `${a} が元に戻っていた（Steam の検証など）。${n} 枚は「ゲームに反映」で戻せる`,
+    note_updated: (a, n) => `${a} がゲームの更新で変わっていたので、控えを新しい atlas に取り替えた。${n} 枚は「ゲームに反映」で戻せる`,
+    other: 'English',
+  },
+};
+let lang = (() => { try { return localStorage.getItem('lang'); } catch { return null; } })() || (navigator.language.startsWith('ja') ? 'ja' : 'en');
+const t = (k, ...a) => { const v = I18N[lang][k]; return typeof v === 'function' ? v(...a) : v; };
+
+const $ = s => document.querySelector(s);
+let sprites = [], byName = {}, backups = [], notes = [], filter = '^face_\\d+(_gold|_mod)?$', ver = Date.now();
+let cur = null;                        // sprite being edited
+let src = null;                        // loaded source image
+let view = { cx: 0, cy: 0, z: 1 };     // center in source pixels; zoom where 1 = cover the frame
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll('[data-t]').forEach(e => e.textContent = t(e.dataset.t));
+  document.querySelectorAll('[data-ph]').forEach(e => e.placeholder = t(e.dataset.ph));
+  $('#lang').textContent = t('other');
+  $('#notes').textContent = notes.map(n => t('note_' + n.code, n.atlas, n.count)).join(' / ');
+  render();
+}
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, body });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function load() {
+  const d = await api('GET', '/api/sprites');
+  sprites = d.sprites; backups = d.backups; notes = d.notes;
+  byName = Object.fromEntries(sprites.map(s => [s.n, s]));
+  ver = Date.now();
+  applyLang();
+}
+
+function render() {
+  let re;
+  try { re = new RegExp($('#q').value || filter, 'i'); } catch { re = /$^/; }
+  const list = sprites.filter(s => filter === '@mod' && !$('#q').value ? s.s : re.test(s.n) && !(s.n.endsWith('_blink') && byName[s.n.slice(0, -6)]));
+  const pending = sprites.filter(s => s.s === 'staged' || s.s === 'lost').length;
+  $('#count').textContent = t('count', list.length, backups.length);
+  $('#count').title = backups.join('\n');
+  $('#restoreAll').disabled = !sprites.some(s => s.s);
+  $('#commit').disabled = !pending;
+  $('#commit').textContent = t('commit', pending);
+  $('#grid').replaceChildren(...list.map(tile));
+}
+
+function tile(s) {
+  const d = document.createElement('div');
+  d.className = 'tile' + (s.s ? ' ' + s.s : '');
+  d.title = `${s.n}  ${s.w}×${s.h}` + (s.s ? `  ${t(s.s)}` : '');
+  d.innerHTML = `<img loading="lazy" src="/img/${encodeURIComponent(s.n)}?v=${ver}" alt=""><span></span>`;
+  d.querySelector('span').textContent = s.n;
+  d.onclick = () => openEditor(s);
+  d.ondragover = e => { e.preventDefault(); d.classList.add('drag'); };
+  d.ondragleave = () => d.classList.remove('drag');
+  d.ondrop = e => { e.preventDefault(); d.classList.remove('drag'); openEditor(s); loadFile(e.dataTransfer.files[0]); };
+  return d;
+}
+
+function openEditor(s) {
+  cur = s; src = null;
+  $('#title').textContent = `${s.n} (${s.w}×${s.h})` + (s.s ? ` — ${t(s.s)}` : '');
+  $('#origImg').src = `/orig/${encodeURIComponent(s.n)}?v=${ver}`;
+  const out = $('#out'); out.width = s.w; out.height = s.h;
+  out.getContext('2d').clearRect(0, 0, s.w, s.h);
+  $('#blinkRow').hidden = !byName[s.n + '_blink'];
+  $('#restore').hidden = !s.s;
+  $('#apply').disabled = true;
+  $('#msg').textContent = t('hint');
+  $('#dl').href = `/img/${encodeURIComponent(s.n)}?v=${ver}`;
+  $('#dl').download = s.n + '.png';
+  $('#stage').classList.add('empty');
+  if (!$('#dlg').open) $('#dlg').showModal();
+  draw();
+}
+
+function loadFile(f) {
+  if (!f || !f.type.startsWith('image/')) return;
+  const img = new Image();
+  img.onload = () => {
+    src = img;
+    view = { cx: img.width / 2, cy: img.height / 2, z: 1 };
+    $('#stage').classList.remove('empty');
+    $('#apply').disabled = false;
+    syncZoom(); draw();
+    URL.revokeObjectURL(img.src);
+  };
+  img.src = URL.createObjectURL(f);
+}
+
+// Output pixels per source pixel when the image just covers the frame.
+const coverScale = () => Math.max(cur.w / src.width, cur.h / src.height);
+const zMin = () => Math.min(cur.w / src.width, cur.h / src.height) / coverScale();
+const zMax = 8;
+function syncZoom() {
+  $('#zoom').value = Math.round(Math.log(view.z / zMin()) / Math.log(zMax / zMin()) * 1000);
+}
+
+function drawSprite(ctx, scale, ox, oy) {
+  // Draws the source in output space; scale = screen pixels per output pixel.
+  const s = coverScale() * view.z * scale;
+  ctx.drawImage(src, ox + cur.w * scale / 2 - view.cx * s, oy + cur.h * scale / 2 - view.cy * s, src.width * s, src.height * s);
+}
+
+function draw() {
+  const st = $('#stage'), r = st.getBoundingClientRect();
+  st.width = Math.round(r.width * devicePixelRatio); st.height = Math.round(r.height * devicePixelRatio);
+  const ctx = st.getContext('2d');
+  ctx.clearRect(0, 0, st.width, st.height);
+  const k = Math.min(st.width * 0.6 / cur.w, st.height * 0.8 / cur.h);   // frame magnification
+  const fx = (st.width - cur.w * k) / 2, fy = (st.height - cur.h * k) / 2;
+  if (src) {
+    ctx.imageSmoothingEnabled = coverScale() * view.z * k < 1;
+    drawSprite(ctx, k, fx, fy);
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(0, 0, st.width, fy); ctx.fillRect(0, fy + cur.h * k, st.width, st.height);
+    ctx.fillRect(0, fy, fx, cur.h * k); ctx.fillRect(fx + cur.w * k, fy, st.width, cur.h * k);
+    const out = $('#out').getContext('2d');
+    out.clearRect(0, 0, cur.w, cur.h);
+    out.imageSmoothingEnabled = $('#smooth').checked;
+    out.imageSmoothingQuality = 'high';
+    drawSprite(out, 1, 0, 0);
+  }
+  ctx.strokeStyle = '#d9a441'; ctx.lineWidth = 2 * devicePixelRatio;
+  ctx.strokeRect(fx, fy, cur.w * k, cur.h * k);
+  st._k = k / devicePixelRatio;
+}
+
+let dragAt = null;
+$('#stage').onpointerdown = e => { if (src) { dragAt = [e.clientX, e.clientY]; e.target.setPointerCapture(e.pointerId); } };
+$('#stage').onpointermove = e => {
+  if (!dragAt) return;
+  const s = coverScale() * view.z * $('#stage')._k;
+  view.cx -= (e.clientX - dragAt[0]) / s; view.cy -= (e.clientY - dragAt[1]) / s;
+  dragAt = [e.clientX, e.clientY]; draw();
+};
+$('#stage').onpointerup = () => dragAt = null;
+$('#stage').onwheel = e => {
+  if (!src) return;
+  e.preventDefault();
+  view.z = Math.min(zMax, Math.max(zMin(), view.z * Math.exp(-e.deltaY * 0.0015)));
+  syncZoom(); draw();
+};
+$('#zoom').oninput = e => {
+  if (!src) return;
+  view.z = zMin() * Math.pow(zMax / zMin(), e.target.value / 1000); draw();
+};
+$('#fit').onclick = () => { if (src) { view = { cx: src.width / 2, cy: src.height / 2, z: zMin() }; syncZoom(); draw(); } };
+$('#fill').onclick = () => { if (src) { view = { cx: src.width / 2, cy: src.height / 2, z: 1 }; syncZoom(); draw(); } };
+$('#smooth').onchange = draw;
+$('#pick').onclick = () => $('#file').click();
+$('#file').onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; };
+$('#dlg').ondragover = e => e.preventDefault();
+$('#dlg').ondrop = e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); };
+document.onpaste = e => {
+  if (!$('#dlg').open) return;
+  const item = [...e.clipboardData.items].find(i => i.type.startsWith('image/'));
+  if (item) loadFile(item.getAsFile());
+};
+window.onresize = () => { if ($('#dlg').open) draw(); };
+$('#close').onclick = () => $('#dlg').close();
+
+$('#apply').onclick = async () => {
+  $('#apply').disabled = true;
+  try {
+    const blob = await new Promise(r => $('#out').toBlob(r, 'image/png'));
+    const names = [cur.n];
+    if (!$('#blinkRow').hidden && $('#blink').checked) names.push(cur.n + '_blink');
+    for (const n of names) await api('POST', `/api/stage/${encodeURIComponent(n)}`, blob);
+    $('#dlg').close(); await load();
+  } catch (err) { $('#msg').textContent = t('failed') + err.message; $('#apply').disabled = false; }
+};
+$('#restore').onclick = async () => {
+  for (const n of [cur.n, cur.n + '_blink'].filter(n => byName[n]?.s)) await api('POST', `/api/restore/${encodeURIComponent(n)}`);
+  $('#dlg').close(); await load();
+};
+$('#restoreAll').onclick = async () => {
+  if (!confirm(t('confirmRestoreAll'))) return;
+  await api('POST', '/api/restore-all'); await load();
+};
+$('#commit').onclick = async () => {
+  if (!confirm(t('confirmCommit', sprites.filter(s => s.s === 'staged' || s.s === 'lost').length))) return;
+  try { await api('POST', '/api/commit'); } catch (err) { alert(t('failed') + err.message); }
+  await load();
+};
+$('#lang').onclick = () => {
+  lang = lang === 'ja' ? 'en' : 'ja';
+  try { localStorage.setItem('lang', lang); } catch { }
+  applyLang();
+};
+document.querySelectorAll('header [data-f]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('header [data-f]').forEach(x => x.classList.toggle('on', x === b));
+  filter = b.dataset.f; $('#q').value = ''; render();
+});
+$('#q').oninput = render;
+applyLang();
+load().catch(err => $('#grid').textContent = t('loadFailed') + err.message);
+</script>
+</body>
+</html>
